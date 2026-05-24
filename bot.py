@@ -12,9 +12,9 @@ warnings.filterwarnings('ignore')
 # ==========================================
 # ⚙️ CONFIGURATION EMAIL (À REMPLIR)
 # ==========================================
-EMAIL_EXPEDITEUR = "ton_adresse@gmail.com" 
+EMAIL_EXPEDITEUR = "clement.cabriere30@gmail.com" 
 MOT_DE_PASSE_APP = "sqkr pviv ctrt ektp"  
-EMAIL_DESTINATAIRE = "ton_adresse@gmail.com"
+EMAIL_DESTINATAIRE = "clement.cabriere30@gmail.com"
 # ==========================================
 
 def envoyer_email(sujet, contenu):
@@ -30,41 +30,36 @@ def envoyer_email(sujet, contenu):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
             server.login(EMAIL_EXPEDITEUR, MOT_DE_PASSE_APP.replace(" ", ""))
             server.send_message(msg)
-        print("✉️  ALERTE EMAIL ENVOYÉE AVEC SUCCÈS !")
+        print(f"✉️  ALERTE EMAIL ENVOYÉE AVEC SUCCÈS !")
     except Exception as e:
         print(f"❌ Erreur critique email : {e}")
 
-def telecharger_donnees(symbole="BTC-USD"):
-    """Téléchargement des prix ET des volumes."""
+def telecharger_donnees(symbole):
+    """Téléchargement des prix ET des volumes pour un symbole précis."""
     data = yf.download(symbole, period="5d", interval="1m", progress=False)
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.droplevel(1)
     return data
 
 def ajouter_indicateurs_pro(df):
-    """Calcul des indicateurs avec intégration du Volume."""
-    # 1. Moyennes Mobiles Classiques
+    """Calcul des indicateurs."""
     df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
     df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
-    # 2. RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     perte = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / perte
     df['RSI_14'] = 100 - (100 / (1 + rs))
     
-    # 3. NOUVEAU : Moyenne du Volume sur 20 minutes
     df['Volume_MA_20'] = df['Volume'].rolling(window=20).mean()
-    
     return df.round(2)
 
 def generer_signaux(df):
-    """Logique ultra-stricte : Tendance + Survente + VOLUME."""
+    """Logique ultra-stricte."""
     df['Signal'] = '➖ NEUTRE'
     
-    # Le bot n'achète QUE si le volume actuel est supérieur à la moyenne des 20 dernières minutes
     achat = (df['Close'] > df['EMA_200']) & (df['RSI_14'] < 30) & (df['Volume'] > df['Volume_MA_20'])
     vente = (df['RSI_14'] > 75) | ((df['EMA_20'] < df['EMA_50']) & (df['EMA_20'].shift(1) >= df['EMA_50'].shift(1)))
     
@@ -74,36 +69,49 @@ def generer_signaux(df):
 
 if __name__ == "__main__":
     print("\n=======================================================")
-    print("🛡️ RADAR INSTITUTIONNEL ACTIVÉ (Filtre de Volume ON)")
+    print("🛡️ RADAR MULTI-CIBLES ACTIVÉ (BTC & ETH)")
     print("=======================================================\n")
     
-    dernier_signal_connu = "➖ NEUTRE" 
+    # 1. On définit la liste des cryptos à surveiller
+    liste_cryptos = ["BTC-USD", "ETH-USD"]
+    
+    # 2. Le bot crée une mémoire séparée pour chaque crypto
+    memoire_signaux = {crypto: "➖ NEUTRE" for crypto in liste_cryptos}
     
     while True:
         try:
-            df = telecharger_donnees()
-            df = ajouter_indicateurs_pro(df)
-            df = generer_signaux(df)
-            
-            aujourd_hui = df.iloc[-1]
-            signal_actuel = aujourd_hui['Signal']
-            prix_actuel = aujourd_hui['Close']
-            volume_actuel = aujourd_hui['Volume']
             heure_actuelle = datetime.now().strftime("%H:%M:%S")
+            print(f"--- Scan de {heure_actuelle} ---")
             
-            # Affichage enrichi avec l'état du volume
-            print(f"[{heure_actuelle}] Prix: {prix_actuel:,.2f} $ | Vol: {volume_actuel:,.0f} | Tendance: {signal_actuel}")
-            
-            if signal_actuel != dernier_signal_connu:
-                if signal_actuel in ['🟢 ACHAT FORT (Volume Confirmé)', '🔴 VENTE']:
-                    sujet = f"🚨 ALERTE CONFIRMÉE : {signal_actuel} BTC"
-                    contenu = f"Mouvement massif détecté avec confirmation des volumes.\n\nHeure : {heure_actuelle}\nPrix : {prix_actuel:,.2f} $\nRSI : {aujourd_hui['RSI_14']}\n\nGo sur ta plateforme."
-                    envoyer_email(sujet, contenu)
+            # 3. Le bot analyse chaque crypto l'une après l'autre
+            for crypto in liste_cryptos:
+                df = telecharger_donnees(crypto)
+                df = ajouter_indicateurs_pro(df)
+                df = generer_signaux(df)
                 
-                dernier_signal_connu = signal_actuel
+                aujourd_hui = df.iloc[-1]
+                signal_actuel = aujourd_hui['Signal']
+                prix_actuel = aujourd_hui['Close']
+                volume_actuel = aujourd_hui['Volume']
+                
+                # Nom raccourci pour un affichage plus propre (ex: BTC au lieu de BTC-USD)
+                nom_propre = crypto.replace("-USD", "")
+                
+                print(f"▸ {nom_propre} | Prix: {prix_actuel:,.2f} $ | Vol: {volume_actuel:,.0f} | Tendance: {signal_actuel}")
+                
+                # 4. Vérification de la mémoire spécifique à CETTE crypto
+                if signal_actuel != memoire_signaux[crypto]:
+                    if signal_actuel in ['🟢 ACHAT FORT (Volume Confirmé)', '🔴 VENTE']:
+                        sujet = f"🚨 ALERTE {nom_propre} : {signal_actuel}"
+                        contenu = f"Mouvement massif détecté sur {nom_propre}.\n\nHeure : {heure_actuelle}\nPrix : {prix_actuel:,.2f} $\nRSI : {aujourd_hui['RSI_14']}\n\nGo sur ta plateforme."
+                        envoyer_email(sujet, contenu)
+                    
+                    # Mise à jour de la mémoire pour cette crypto uniquement
+                    memoire_signaux[crypto] = signal_actuel
             
+            print("") # Ligne vide pour aérer la lecture
             time.sleep(60)
             
         except Exception as e:
-            print(f"⚠️ Perturbation, reprise dans 60s... ({e})")
+            print(f"⚠️ Perturbation réseau, reprise dans 60s... ({e})")
             time.sleep(60)
